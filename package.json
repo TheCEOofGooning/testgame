@@ -11,7 +11,8 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "tsx scripts/harness.ts && tsx scripts/dom-smoke.ts && tsx scripts/db-check.ts",
-    "test:db": "tsx scripts/db-check.ts"
+    "test:db": "tsx scripts/db-check.ts",
+    "shots": "node scripts/uishot.mjs"
   },
   "repository": {
     "type": "git",

@@ -108,8 +108,22 @@ async function main() {
   g.matchMedia = (window as any).matchMedia;
   g.fetch = (window as any).fetch;
   g.getComputedStyle = (el: any) => window.getComputedStyle(el);
-  g.requestAnimationFrame = () => 0;
+  // Collect frame callbacks instead of running them, so the test can drive
+  // the simulation itself — then flush them on demand for the UI's own
+  // animations (the score tally on the result card).
+  let frameQueue: ((t: number) => void)[] = [];
+  g.requestAnimationFrame = (cb: (t: number) => void) => frameQueue.push(cb);
   g.cancelAnimationFrame = noop;
+  const pumpFrames = (frames: number, stepMs = 16) => {
+    // hand out an advancing clock, or time-based tweens never progress
+    let clock = performance.now();
+    for (let i = 0; i < frames; i++) {
+      clock += stepMs;
+      const batch = frameQueue;
+      frameQueue = [];
+      for (const cb of batch) cb(clock);
+    }
+  };
   g.setInterval = (() => 0) as any;
 
   console.log("\n— page markup");
@@ -150,6 +164,18 @@ async function main() {
     (window.document.getElementById("board-list")!.children.length ?? 0) >= 4,
     `${window.document.getElementById("board-list")!.children.length} rows`,
   );
+  const boardHtml = window.document.getElementById("board-list")!.innerHTML;
+  check(
+    "resident rows are marked with a drawn leaf, not a font glyph",
+    boardHtml.includes("<svg") && !boardHtml.includes("\u2767"),
+  );
+  check(
+    "every row carries its score bar width",
+    (boardHtml.match(/--w:/g) ?? []).length ===
+      window.document.getElementById("board-list")!.children.length,
+  );
+  check("the HUD is hidden on the title screen",
+    window.document.getElementById("hud")!.hasAttribute("hidden"));
 
   console.log("\n— a flight, start to finish");
   (window.document.getElementById("name") as HTMLInputElement).value = "Tester";
@@ -161,6 +187,24 @@ async function main() {
     window.document.documentElement.classList.contains("is-playing") &&
       window.document.getElementById("title")!.hasAttribute("hidden"),
   );
+  check("the HUD is shown while flying",
+    !window.document.getElementById("hud")!.hasAttribute("hidden"));
+
+  // Escape must pause, not throw the run away.
+  const esc = () =>
+    window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  esc();
+  check(
+    "Escape opens the pause card instead of ending the run",
+    !window.document.getElementById("pause")!.hasAttribute("hidden") &&
+      window.document.documentElement.classList.contains("is-playing"),
+  );
+  esc();
+  check(
+    "Escape again resumes",
+    window.document.getElementById("pause")!.hasAttribute("hidden") &&
+      window.document.documentElement.classList.contains("is-playing"),
+  );
 
   // drive the simulation by hand (no rAF in jsdom worth trusting)
   const game: any = (globalThis as any).__mothlightGame;
@@ -171,14 +215,47 @@ async function main() {
     steps++;
   }
   check("the flight ended", game.phase === "done", `${(steps / 120).toFixed(1)}s`);
+  check(
+    "the HUD tracked the flight",
+    Number(
+      (window.document.getElementById("hud-score")!.textContent ?? "0").replace(/\D/g, ""),
+    ) > 0,
+    window.document.getElementById("hud-score")!.textContent ?? "",
+  );
+  check(
+    "a glimmer bead was rendered per life",
+    window.document.getElementById("hud-glimmers")!.children.length >= 3,
+  );
+  check(
+    "one ghost pip per rival moth",
+    window.document.getElementById("hud-pips")!.children.length ===
+      (game as { ghosts: unknown[] }).ghosts.length,
+    `${window.document.getElementById("hud-pips")!.children.length} pips`,
+  );
 
   await new Promise((r) => setTimeout(r, 60));
   check(
     "result screen shown",
     !window.document.getElementById("result")!.hasAttribute("hidden"),
   );
+  // the engine's loop is driven by hand above; stop it before flushing
+  // frames so only the interface's animations advance
+  (game as { running: boolean }).running = false;
+  pumpFrames(90);
   const score = window.document.getElementById("score-value")!.textContent ?? "";
-  check("score rendered", /\d/.test(score), score);
+  check(
+    "the score tallied up to the real total",
+    Number(score.replace(/\D/g, "")) === (game as { score: number }).score ||
+      Number(score.replace(/\D/g, "")) === Math.floor((game as { score: number }).score),
+    `${score} (engine: ${Math.floor((game as { score: number }).score)})`,
+  );
+  check(
+    "a medal tier was awarded",
+    ["gold", "silver", "bronze", "none"].includes(
+      window.document.getElementById("medal")!.dataset.tier ?? "",
+    ),
+    window.document.getElementById("medal")!.dataset.tier ?? "",
+  );
   check(
     "verdict rendered",
     (window.document.getElementById("verdict")!.textContent ?? "").length > 3,

@@ -58,6 +58,26 @@
   font-display: swap;
 }
 
+/* ==================================================================== *
+ *  MOTHLIGHT — interface
+ *
+ *  Everything below is drawn by the browser: no images, no icon font,
+ *  no UI framework. The look is built from layered gradients, hairline
+ *  borders, backdrop blur and a single procedural grain, which is why a
+ *  "AAA" interface still costs a few kilobytes instead of a few hundred.
+ *
+ *  Three ideas hold it together:
+ *    1. Glass over a living scene — every panel blurs the garden behind
+ *       it rather than hiding it, so the game is always visible.
+ *    2. Lantern light — gold is the only warm colour and it only ever
+ *       marks the thing you should look at or touch.
+ *    3. The HUD belongs to the field, not the window. It is positioned
+ *       over the exact play-field rectangle the engine reports, and
+ *       scales in world units, so it reads identically on a phone and
+ *       on an ultrawide — but is rendered as DOM text at full device
+ *       resolution, so it never looks upscaled.
+ * ==================================================================== */
+
 :root {
   --font-display: "Fraunces", "Iowan Old Style", Palatino, Georgia, serif;
   --font-ui: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -70,19 +90,40 @@
   --muted-dim: #64748f;
   --gold: #ffd98a;
   --gold-soft: #fff0cc;
+  --gold-deep: #e0a85a;
   --rose: #ff9d7a;
   --mint: #8ae8b4;
   --violet: #b9a8ff;
 
-  --panel: rgba(12, 19, 34, 0.72);
-  --panel-line: rgba(176, 202, 255, 0.11);
-  --panel-glow: 0 24px 60px -24px rgba(0, 0, 0, 0.85);
+  /* panel system */
+  /* Deliberately translucent: the garden is alive behind every panel and
+     should bloom through the glass, not be boarded up by it. */
+  --panel-fill: linear-gradient(
+    168deg,
+    rgba(26, 38, 62, 0.58) 0%,
+    rgba(11, 18, 33, 0.68) 46%,
+    rgba(7, 12, 24, 0.76) 100%
+  );
+  --panel-line: rgba(176, 202, 255, 0.14);
+  --panel-bevel: inset 0 1px 0 rgba(222, 236, 255, 0.16),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.5);
+  --panel-shadow: 0 40px 90px -34px rgba(0, 0, 0, 0.95),
+    0 8px 28px -14px rgba(0, 0, 0, 0.7);
+  --panel-blur: blur(26px) saturate(1.45) brightness(0.92);
 
   --r-sm: 10px;
   --r-md: 16px;
-  --r-lg: 24px;
+  --r-lg: 22px;
 
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* the play-field rectangle, in CSS pixels — written by the engine */
+  --fx: 0px;
+  --fy: 0px;
+  --fw: 100vw;
+  --fh: 100vh;
+  --u: 1; /* CSS pixels per world unit */
 }
 
 *,
@@ -128,109 +169,249 @@ input {
   background: rgba(255, 217, 138, 0.3);
 }
 
-/* ------------------------------------------------------------------ */
-/* stage                                                               */
-/* ------------------------------------------------------------------ */
+:focus-visible {
+  outline: 2px solid rgba(255, 217, 138, 0.85);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* ==================================================================== */
+/*  stage + cinematic shell                                             */
+/* ==================================================================== */
 
 .stage {
   position: fixed;
   inset: 0;
-  display: block;
-  touch-action: none;
-  user-select: none;
-  -webkit-user-select: none;
-  -webkit-tap-highlight-color: transparent;
+  z-index: 0;
 }
 
 .stage canvas {
   display: block;
   width: 100%;
   height: 100%;
-  touch-action: none;
 }
 
 .stage.playing {
   cursor: none;
 }
 
-.ui {
+/* A single procedural grain plate, scrolled in steps. It sits over the
+   canvas at very low opacity and does for the whole screen what a film
+   stock would: it glues the flat gradients together and kills banding. */
+.grain {
+  position: fixed;
+  inset: -120px;
+  z-index: 2;
+  pointer-events: none;
+  opacity: 0.045;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
+  animation: grain-drift 0.9s steps(1) infinite;
+}
+
+/* A vignette that tightens and warms as the dawn closes in: --danger is
+   written by the HUD loop, so the whole window reacts to the game. */
+.vignette {
   position: fixed;
   inset: 0;
+  z-index: 3;
   pointer-events: none;
-  display: flex;
-  flex-direction: column;
-  z-index: 10;
+  --danger: 0;
+  background:
+    radial-gradient(
+      120% 85% at 50% 50%,
+      transparent 42%,
+      rgba(255, 150, 90, calc(var(--danger) * 0.26)) 78%,
+      rgba(255, 120, 70, calc(var(--danger) * 0.4)) 100%
+    ),
+    radial-gradient(130% 95% at 50% 45%, transparent 58%, rgba(0, 0, 0, 0.42) 100%);
+  transition: background 220ms linear;
 }
 
-.ui > * {
-  pointer-events: auto;
-}
-
-/* ------------------------------------------------------------------ */
-/* shared panel look                                                   */
-/* ------------------------------------------------------------------ */
+/* ==================================================================== */
+/*  panels                                                              */
+/* ==================================================================== */
 
 .panel {
-  background: var(--panel);
+  position: relative;
+  background: var(--panel-fill);
   border: 1px solid var(--panel-line);
   border-radius: var(--r-lg);
-  box-shadow: var(--panel-glow), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(18px) saturate(1.2);
-  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  box-shadow: var(--panel-bevel), var(--panel-shadow);
+  -webkit-backdrop-filter: var(--panel-blur);
+  backdrop-filter: var(--panel-blur);
 }
+
+/* The warm light the panel catches from the lantern below it. */
+.panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    radial-gradient(90% 60% at 50% 110%, rgba(255, 196, 112, 0.12), transparent 70%),
+    radial-gradient(70% 40% at 50% -10%, rgba(180, 212, 255, 0.08), transparent 70%);
+}
+
+/* Gold corner brackets. Four 1px L-shapes — the cheapest way to make a
+   rectangle feel like a machined object instead of a div. */
+.corner {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+  border: 0 solid rgba(255, 217, 138, 0.45);
+}
+.corner.tl {
+  top: 7px;
+  left: 7px;
+  border-top-width: 1px;
+  border-left-width: 1px;
+  border-top-left-radius: 8px;
+}
+.corner.tr {
+  top: 7px;
+  right: 7px;
+  border-top-width: 1px;
+  border-right-width: 1px;
+  border-top-right-radius: 8px;
+}
+.corner.bl {
+  bottom: 7px;
+  left: 7px;
+  border-bottom-width: 1px;
+  border-left-width: 1px;
+  border-bottom-left-radius: 8px;
+}
+.corner.br {
+  bottom: 7px;
+  right: 7px;
+  border-bottom-width: 1px;
+  border-right-width: 1px;
+  border-bottom-right-radius: 8px;
+}
+
+/* An ornamental divider: hairline, lozenge, hairline. */
+.rule {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin: 16px auto 0;
+  width: 78%;
+  color: rgba(255, 217, 138, 0.5);
+}
+.rule i {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 217, 138, 0.38), transparent);
+}
+
+/* ==================================================================== */
+/*  buttons                                                             */
+/* ==================================================================== */
 
 .btn {
   position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  padding: 14px 28px;
+  gap: 8px;
+  padding: 13px 26px;
   border-radius: 999px;
-  font-weight: 650;
-  font-size: 1.02rem;
-  letter-spacing: 0.01em;
-  color: #2a1c06;
-  background: linear-gradient(170deg, #ffeab8, var(--gold) 55%, #f3bd63);
-  box-shadow:
-    0 0 0 1px rgba(255, 236, 194, 0.5),
-    0 10px 30px -8px rgba(255, 196, 102, 0.5),
-    inset 0 1px 0 rgba(255, 255, 255, 0.7);
-  transition: transform 0.18s var(--ease), box-shadow 0.18s var(--ease), filter 0.18s;
+  font-size: 0.98rem;
+  font-weight: 600;
+  letter-spacing: 0.012em;
+  overflow: hidden;
+  isolation: isolate;
+  transition:
+    transform 180ms var(--ease),
+    box-shadow 220ms var(--ease),
+    background-color 180ms linear,
+    border-color 180ms linear;
 }
 
-.btn:hover {
+.btn > span {
+  position: relative;
+  z-index: 2;
+}
+
+/* The lantern button. Warm gradient, a bevel of its own, and a halo that
+   breathes — it should look like the light you are about to follow. */
+.btn.primary {
+  color: #2a1c06;
+  background:
+    linear-gradient(180deg, #fff3d2 0%, var(--gold) 46%, #f0bb6c 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    inset 0 -2px 4px rgba(150, 95, 20, 0.35),
+    0 10px 30px -10px rgba(255, 196, 112, 0.6),
+    0 0 0 1px rgba(255, 220, 150, 0.35);
+}
+
+/* the specular sweep */
+.btn.primary::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  transform: translateX(-120%);
+  background: linear-gradient(
+    105deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.72) 48%,
+    transparent 66%
+  );
+}
+
+.btn.primary:hover::after,
+.btn.primary:focus-visible::after {
+  animation: sheen 760ms var(--ease-out);
+}
+
+.btn.primary:hover {
   transform: translateY(-2px);
   box-shadow:
-    0 0 0 1px rgba(255, 236, 194, 0.6),
-    0 18px 44px -10px rgba(255, 196, 102, 0.62),
-    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    inset 0 -2px 4px rgba(150, 95, 20, 0.3),
+    0 16px 42px -12px rgba(255, 201, 120, 0.85),
+    0 0 0 1px rgba(255, 228, 170, 0.5);
 }
 
-.btn:active {
+.btn.primary:active {
   transform: translateY(0) scale(0.985);
+  box-shadow:
+    inset 0 2px 6px rgba(130, 80, 15, 0.4),
+    0 6px 18px -10px rgba(255, 196, 112, 0.5);
 }
 
 .btn.ghost {
   color: var(--ink);
-  background: rgba(255, 255, 255, 0.05);
-  box-shadow: inset 0 0 0 1px var(--panel-line);
-  font-weight: 560;
+  background: rgba(146, 176, 228, 0.07);
+  border: 1px solid rgba(176, 202, 255, 0.16);
+  box-shadow: inset 0 1px 0 rgba(222, 236, 255, 0.08);
 }
 
 .btn.ghost:hover {
-  background: rgba(255, 255, 255, 0.1);
-  box-shadow: inset 0 0 0 1px rgba(176, 202, 255, 0.24);
+  background: rgba(146, 176, 228, 0.14);
+  border-color: rgba(255, 217, 138, 0.38);
+  color: var(--gold-soft);
+  transform: translateY(-1px);
+}
+
+.btn.ghost:active {
+  transform: scale(0.985);
 }
 
 .btn.small {
   padding: 9px 16px;
-  font-size: 0.86rem;
+  font-size: 0.85rem;
 }
 
-/* ------------------------------------------------------------------ */
-/* title screen                                                        */
-/* ------------------------------------------------------------------ */
+/* ==================================================================== */
+/*  curtains (title / result / pause)                                   */
+/* ==================================================================== */
 
 .curtain {
   position: fixed;
@@ -238,37 +419,85 @@ input {
   z-index: 20;
   display: grid;
   place-items: center;
-  padding: 24px;
-  background:
-    radial-gradient(120% 80% at 50% 0%, rgba(4, 6, 12, 0.1), rgba(4, 6, 12, 0.82) 70%),
-    linear-gradient(to bottom, rgba(4, 6, 12, 0.5), rgba(4, 6, 12, 0.88));
-  animation: fade-in 0.6s var(--ease) both;
+  padding: 20px;
   overflow-y: auto;
+  background:
+    radial-gradient(74% 58% at 50% 48%, rgba(4, 7, 14, 0.3), rgba(3, 5, 11, 0.72) 100%);
+  animation: fade-in 420ms var(--ease) both;
 }
+
+/* ---------------------------- title --------------------------------- */
 
 .title-card {
-  width: min(440px, 100%);
-  padding: 34px 30px 26px;
+  width: min(500px, 100%);
+  padding: 30px 34px 26px;
   text-align: center;
-  animation: rise 0.7s var(--ease) both 0.08s;
+  animation: rise 0.78s var(--ease) both 0.06s;
 }
 
+.crest {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 2px;
+}
+
+/* the lantern the moth is circling, breathing behind the card */
+.crest::before {
+  content: "";
+  position: absolute;
+  width: 230px;
+  height: 230px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 206, 122, 0.22), transparent 66%);
+  animation: breathe 7s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.moth-mark {
+  animation: flutter 5.5s ease-in-out infinite;
+  filter: drop-shadow(0 0 18px rgba(255, 206, 122, 0.45));
+}
+
+/* The wordmark is set in a display serif, letterspaced, with a gold
+   gradient and a highlight that drifts across it once in a while — the
+   trailing letter-space is paid for with padding so the last glyph can
+   never fall outside the gradient's box and vanish. */
 .wordmark {
+  margin: 6px 0 0;
   font-family: var(--font-display);
   font-weight: 600;
-  font-size: clamp(2.6rem, 10vw, 3.5rem);
-  line-height: 0.95;
-  letter-spacing: 0.1em;
-  margin: 0;
-  background: linear-gradient(180deg, #fffaf0, var(--gold) 58%, #e0a85a);
+  font-size: clamp(2rem, 8.5vw, 3.1rem);
+  line-height: 1.04;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.wordmark span {
+  display: inline-block;
+  padding: 0 0 0.08em 0.14em;
+  background: linear-gradient(
+      100deg,
+      #e8c389 0%,
+      #fffaf0 18%,
+      var(--gold) 38%,
+      #f6d79e 52%,
+      var(--gold-deep) 72%,
+      #f3cf92 100%
+    )
+    0 0 / 280% 100%;
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  filter: drop-shadow(0 0 26px rgba(255, 206, 122, 0.3));
+  filter: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.55))
+    drop-shadow(0 0 28px rgba(255, 206, 122, 0.4));
+  animation: wordmark-shimmer 9s var(--ease) infinite;
 }
 
 .tagline {
-  margin: 12px 0 0;
+  margin: 10px 0 0;
   font-family: var(--font-display);
   font-style: italic;
   font-size: 1.04rem;
@@ -277,15 +506,23 @@ input {
 }
 
 .seedline {
-  margin: 18px 0 22px;
-  font-size: 0.8rem;
-  letter-spacing: 0.14em;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  margin: 14px 0 20px;
+  padding: 6px 15px;
+  border: 1px solid rgba(176, 202, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(8, 13, 25, 0.5);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.17em;
   text-transform: uppercase;
   color: var(--muted-dim);
 }
 
 .seedline b {
-  color: var(--muted);
+  color: var(--gold-soft);
   font-weight: 600;
 }
 
@@ -296,66 +533,90 @@ input {
   margin: 0 auto 18px;
   padding: 4px 4px 4px 16px;
   width: 100%;
-  max-width: 320px;
+  max-width: 330px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.04);
-  box-shadow: inset 0 0 0 1px var(--panel-line);
-  transition: box-shadow 0.2s var(--ease);
+  background: rgba(4, 8, 17, 0.6);
+  border: 1px solid rgba(176, 202, 255, 0.14);
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.45);
+  transition: border-color 200ms, box-shadow 200ms;
 }
 
 .namefield:focus-within {
-  box-shadow: inset 0 0 0 1px rgba(255, 217, 138, 0.45);
+  border-color: rgba(255, 217, 138, 0.5);
+  box-shadow:
+    inset 0 2px 8px rgba(0, 0, 0, 0.45),
+    0 0 0 3px rgba(255, 217, 138, 0.13);
 }
 
 .namefield label {
-  font-size: 0.76rem;
-  letter-spacing: 0.12em;
+  flex: none;
+  font-size: 0.64rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--muted-dim);
-  white-space: nowrap;
 }
 
 .namefield input {
   flex: 1;
   min-width: 0;
-  padding: 10px 12px;
+  padding: 10px 14px 10px 0;
   border: 0;
+  background: none;
+  font-size: 0.95rem;
   outline: none;
-  background: transparent;
-  font-weight: 600;
-  letter-spacing: 0.01em;
 }
 
 .namefield input::placeholder {
-  color: var(--muted-dim);
-  font-weight: 400;
+  color: rgba(143, 162, 196, 0.5);
 }
 
 .howto {
-  margin-top: 22px;
-  text-align: left;
   display: grid;
-  gap: 12px;
+  gap: 11px;
+  margin: 22px 0 4px;
+  text-align: left;
 }
 
 .howto .row {
-  display: grid;
-  grid-template-columns: 34px 1fr;
+  display: flex;
   gap: 12px;
-  align-items: start;
-  font-size: 0.9rem;
+  align-items: flex-start;
+  font-size: 0.86rem;
+  line-height: 1.52;
   color: var(--muted);
-  line-height: 1.45;
+  animation: rise 0.6s var(--ease) both;
+}
+.howto .row:nth-child(1) {
+  animation-delay: 0.26s;
+}
+.howto .row:nth-child(2) {
+  animation-delay: 0.34s;
+}
+.howto .row:nth-child(3) {
+  animation-delay: 0.42s;
 }
 
 .howto .row .k {
+  flex: none;
   display: grid;
   place-items: center;
-  height: 34px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.045);
-  box-shadow: inset 0 0 0 1px var(--panel-line);
-  font-size: 1rem;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  color: var(--gold);
+  background: radial-gradient(
+    110% 110% at 50% 0%,
+    rgba(255, 217, 138, 0.16),
+    rgba(255, 217, 138, 0.04)
+  );
+  border: 1px solid rgba(255, 217, 138, 0.22);
+  box-shadow: inset 0 1px 0 rgba(255, 240, 204, 0.18);
+}
+
+.howto .row .k svg {
+  width: 17px;
+  height: 17px;
 }
 
 .howto .row b {
@@ -364,393 +625,756 @@ input {
 }
 
 .footnote {
-  margin-top: 20px;
-  font-size: 0.74rem;
+  margin: 18px 0 0;
+  font-size: 0.73rem;
+  line-height: 1.6;
   color: var(--muted-dim);
-  letter-spacing: 0.02em;
 }
 
-.footnote a {
-  color: var(--muted);
-  text-decoration: none;
-  border-bottom: 1px dotted rgba(143, 162, 196, 0.4);
-}
-
-/* ------------------------------------------------------------------ */
-/* result card                                                         */
-/* ------------------------------------------------------------------ */
+/* ---------------------------- result -------------------------------- */
 
 .result {
   width: min(460px, 100%);
-  padding: 28px 28px 22px;
-  animation: rise 0.6s var(--ease) both;
+  padding: 30px 30px 26px;
   text-align: center;
+  animation: rise 0.6s var(--ease) both;
+}
+
+.medal {
+  width: 62px;
+  height: 62px;
+  margin: 0 auto 10px;
+  animation: pop 0.6s var(--ease) both 0.1s;
+}
+
+.medal svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.medal .disc {
+  fill: none;
+  stroke: var(--gold);
+  stroke-width: 1.4;
+  opacity: 0.55;
+}
+
+.medal .inner {
+  fill: radial-gradient(#fff, #000);
+  fill: rgba(255, 217, 138, 0.1);
+  stroke: rgba(255, 217, 138, 0.35);
+  stroke-width: 1;
+}
+
+.medal text {
+  fill: var(--gold-soft);
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 600;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
+.medal[data-tier="gold"] .disc {
+  opacity: 1;
+  filter: drop-shadow(0 0 10px rgba(255, 206, 122, 0.8));
+}
+.medal[data-tier="silver"] .disc {
+  stroke: #d6e2f5;
+}
+.medal[data-tier="silver"] text {
+  fill: #eaf1ff;
+}
+.medal[data-tier="bronze"] .disc {
+  stroke: #e3a877;
 }
 
 .result .verdict {
+  margin: 0;
   font-family: var(--font-display);
-  font-style: italic;
-  font-size: 1.1rem;
+  font-size: 1.42rem;
+  font-weight: 600;
+  letter-spacing: 0.005em;
   color: var(--gold-soft);
-  margin: 0 0 4px;
+  animation: rise 0.5s var(--ease) both 0.14s;
 }
 
 .result .score {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 9px;
+  margin: 10px 0 0;
+  animation: rise 0.5s var(--ease) both 0.2s;
+}
+
+.result .score span {
   font-family: var(--font-display);
-  font-size: clamp(3rem, 14vw, 4.2rem);
   font-weight: 600;
+  font-size: 3.5rem;
   line-height: 1;
-  margin: 6px 0 2px;
-  color: #fff6e2;
-  text-shadow: 0 0 40px rgba(255, 208, 128, 0.35);
+  font-variant-numeric: tabular-nums;
+  background: linear-gradient(180deg, #fffaf0, var(--gold) 60%, var(--gold-deep));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 24px rgba(255, 206, 122, 0.35));
 }
 
 .result .score small {
-  font-size: 0.3em;
+  font-size: 0.72rem;
   letter-spacing: 0.2em;
-  color: var(--muted-dim);
-  display: block;
-  margin-top: 10px;
   text-transform: uppercase;
+  color: var(--muted-dim);
 }
 
 .pb {
   display: inline-block;
   margin-top: 10px;
-  padding: 5px 12px;
+  padding: 5px 13px;
   border-radius: 999px;
-  font-size: 0.74rem;
-  letter-spacing: 0.1em;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   color: #2a1c06;
-  background: linear-gradient(180deg, #ffeab8, var(--gold));
-  font-weight: 700;
+  background: linear-gradient(180deg, #fff3d2, var(--gold));
+  box-shadow: 0 6px 20px -8px rgba(255, 201, 120, 0.9);
   animation: pop 0.5s var(--ease) both 0.3s;
 }
 
 .stats {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
-  margin: 22px 0 18px;
+  margin: 22px 0 0;
+  border-top: 1px solid rgba(176, 202, 255, 0.1);
+  border-bottom: 1px solid rgba(176, 202, 255, 0.1);
 }
 
 .stats .cell {
-  padding: 12px 6px;
-  border-radius: var(--r-md);
-  background: rgba(255, 255, 255, 0.035);
-  box-shadow: inset 0 0 0 1px var(--panel-line);
+  padding: 13px 4px;
+  animation: rise 0.5s var(--ease) both;
+}
+.stats .cell + .cell {
+  border-left: 1px solid rgba(176, 202, 255, 0.08);
+}
+.stats .cell:nth-child(1) {
+  animation-delay: 0.26s;
+}
+.stats .cell:nth-child(2) {
+  animation-delay: 0.32s;
+}
+.stats .cell:nth-child(3) {
+  animation-delay: 0.38s;
+}
+.stats .cell:nth-child(4) {
+  animation-delay: 0.44s;
 }
 
 .stats .cell .v {
-  font-size: 1.18rem;
-  font-weight: 650;
+  font-family: var(--font-display);
+  font-size: 1.3rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
   color: var(--ink);
 }
 
 .stats .cell .l {
   margin-top: 3px;
-  font-size: 0.66rem;
-  letter-spacing: 0.1em;
+  font-size: 0.6rem;
+  letter-spacing: 0.15em;
   text-transform: uppercase;
   color: var(--muted-dim);
 }
 
 .outflew {
-  margin: 0 0 18px;
-  font-size: 0.92rem;
+  margin: 18px 0 0;
+  animation: rise 0.5s var(--ease) both 0.5s;
+}
+
+.outflew p {
+  margin: 0 0 8px;
+  font-size: 0.84rem;
   color: var(--muted);
 }
 
 .outflew b {
-  color: var(--mint);
-  font-weight: 650;
+  color: var(--gold-soft);
+  font-weight: 600;
+}
+
+.outflew .bar,
+.dawnmeter .bar {
+  display: block;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(176, 202, 255, 0.12);
+  overflow: hidden;
+}
+
+.outflew .bar i {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--gold-deep), var(--gold), #fff3d2);
+  box-shadow: 0 0 14px rgba(255, 206, 122, 0.7);
+  transition: width 900ms var(--ease-out) 0.55s;
 }
 
 .actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   justify-content: center;
-  flex-wrap: wrap;
+  margin-top: 22px;
+  animation: rise 0.5s var(--ease) both 0.56s;
 }
 
-/* ------------------------------------------------------------------ */
-/* leaderboard                                                         */
-/* ------------------------------------------------------------------ */
+.actions.column {
+  flex-direction: column;
+  align-items: stretch;
+}
 
-.board {
-  width: 290px;
-  padding: 18px 18px 14px;
-  max-height: min(70vh, 560px);
+/* ---------------------------- pause --------------------------------- */
+
+.pausecard {
+  max-width: 340px;
+}
+
+.pausehint {
+  margin: 8px 0 0;
+  font-size: 0.8rem;
+  color: var(--muted-dim);
+}
+
+/* ==================================================================== */
+/*  HUD — lives over the play field, measured in world units            */
+/* ==================================================================== */
+
+.hud {
+  position: fixed;
+  left: var(--fx);
+  top: var(--fy);
+  width: var(--fw);
+  height: var(--fh);
+  z-index: 10;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+  animation: fade-in 500ms var(--ease) both;
+}
+
+.hud-tl {
+  position: absolute;
+  left: calc(var(--u) * 24px);
+  top: calc(var(--u) * 20px);
+  text-align: left;
+}
+
+.hud-score {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: calc(var(--u) * 46px);
+  line-height: 1;
+  color: #fffaf0;
+  text-shadow:
+    0 2px 10px rgba(0, 0, 0, 0.75),
+    0 0 30px rgba(255, 206, 122, 0.35);
+  transition: transform 120ms var(--ease);
+}
+
+.hud-score.bump {
+  animation: score-bump 320ms var(--ease);
+}
+
+.hud-metres {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--u) * 4px);
+  margin-top: calc(var(--u) * 3px);
+  font-size: calc(var(--u) * 16px);
+  font-weight: 500;
+  color: rgba(214, 230, 255, 0.62);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
+}
+
+.hud-metres span {
+  font-size: 0.78em;
+  letter-spacing: 0.1em;
+  opacity: 0.7;
+}
+
+/* combo: a dial that drains, so you can feel the chain running out */
+.hud-combo {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  margin-top: calc(var(--u) * 10px);
+  width: calc(var(--u) * 46px);
+  height: calc(var(--u) * 46px);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: calc(var(--u) * 19px);
+  color: var(--gold-soft);
+  text-shadow: 0 0 14px rgba(255, 206, 122, 0.8);
+  animation: pop 280ms var(--ease);
+}
+
+.hud-combo .x {
+  font-size: 0.72em;
+  opacity: 0.7;
+  margin-right: 0.04em;
+}
+
+.hud-combo .ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.hud-combo .ring circle {
+  fill: none;
+  stroke-width: 2.2;
+}
+
+.hud-combo .ring .track {
+  stroke: rgba(255, 217, 138, 0.16);
+}
+
+.hud-combo .ring .fill {
+  stroke: var(--gold);
+  stroke-linecap: round;
+  stroke-dasharray: 97.4;
+  filter: drop-shadow(0 0 4px rgba(255, 206, 122, 0.9));
+  transition: stroke-dashoffset 120ms linear;
+}
+
+.hud-tc {
+  position: absolute;
+  left: 50%;
+  top: calc(var(--u) * 22px);
+  transform: translateX(-50%);
+  text-align: center;
+}
+
+.hud-ghosts {
   display: flex;
   flex-direction: column;
-  animation: slide-in 0.7s var(--ease) both 0.2s;
+  align-items: center;
+  gap: calc(var(--u) * 6px);
 }
 
-.board h3 {
-  margin: 0;
-  font-family: var(--font-display);
-  font-size: 1.05rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-.board .sub {
-  margin: 3px 0 14px;
-  font-size: 0.72rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--muted-dim);
-}
-
-.board ol {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(176, 202, 255, 0.2) transparent;
-}
-
-.board li {
-  display: grid;
-  grid-template-columns: 22px 1fr auto;
-  gap: 10px;
-  align-items: baseline;
-  padding: 7px 8px;
-  border-radius: 9px;
-  font-size: 0.88rem;
-  color: var(--muted);
-}
-
-.board li.me {
-  background: rgba(255, 217, 138, 0.1);
-  box-shadow: inset 0 0 0 1px rgba(255, 217, 138, 0.22);
-  color: var(--gold-soft);
-}
-
-.board li .r {
-  font-size: 0.74rem;
-  color: var(--muted-dim);
-  font-variant-numeric: tabular-nums;
-}
-
-.board li .n {
-  color: var(--ink);
-  font-weight: 540;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.board li.me .n {
-  color: var(--gold-soft);
-}
-
-.board li:nth-child(1) .r {
-  color: var(--gold);
-}
-
-.board li .s {
-  font-variant-numeric: tabular-nums;
-  font-weight: 620;
-  color: var(--ink);
-}
-
-.board .empty {
-  padding: 18px 4px;
-  font-size: 0.84rem;
-  color: var(--muted-dim);
-  line-height: 1.5;
-}
-
-.board .countdown {
-  margin-top: 12px;
-  padding-top: 11px;
-  border-top: 1px solid var(--panel-line);
-  font-size: 0.72rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted-dim);
+.hud-ghosts .pips {
   display: flex;
-  justify-content: space-between;
-  gap: 8px;
+  gap: calc(var(--u) * 5px);
 }
 
-.board .countdown b {
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-  font-weight: 620;
+/* one dot per rival; it dims when that moth's run has ended */
+.hud-ghosts .pips b {
+  width: calc(var(--u) * 6px);
+  height: calc(var(--u) * 6px);
+  border-radius: 50%;
+  background: rgba(198, 216, 255, 0.85);
+  box-shadow: 0 0 calc(var(--u) * 7px) rgba(170, 200, 255, 0.8);
+  transition: background 500ms, box-shadow 500ms, transform 500ms;
 }
+
+.hud-ghosts .pips b.asleep {
+  background: rgba(150, 170, 210, 0.22);
+  box-shadow: none;
+  transform: scale(0.72);
+}
+
+.hud-ghosts .t {
+  font-size: calc(var(--u) * 14px);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: rgba(200, 218, 246, 0.6);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
+}
+
+.hud-tr {
+  position: absolute;
+  right: calc(var(--u) * 24px);
+  top: calc(var(--u) * 22px);
+  display: flex;
+  gap: calc(var(--u) * 9px);
+}
+
+/* glimmers: the lives, drawn as little lantern beads */
+.hud-tr b {
+  position: relative;
+  width: calc(var(--u) * 14px);
+  height: calc(var(--u) * 14px);
+  border-radius: 50%;
+  background: rgba(255, 240, 196, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(255, 240, 196, 0.22);
+  transition: background 320ms, box-shadow 320ms, transform 320ms var(--ease);
+}
+
+.hud-tr b.on {
+  background: radial-gradient(circle at 40% 35%, #fffdf4, #ffd98a 60%, #e9b065);
+  box-shadow:
+    0 0 calc(var(--u) * 14px) rgba(255, 217, 138, 0.85),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+}
+
+.hud-tr b.spent {
+  animation: glimmer-out 520ms var(--ease);
+}
+
+/* the biome banner */
+.banner {
+  position: absolute;
+  left: 50%;
+  top: 32%;
+  transform: translateX(-50%);
+  width: 100%;
+  text-align: center;
+  animation: banner 3.4s var(--ease) both;
+}
+
+.banner b {
+  display: block;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: calc(var(--u) * 36px);
+  letter-spacing: 0.06em;
+  color: #fff8e8;
+  text-shadow:
+    0 2px 18px rgba(0, 0, 0, 0.8),
+    0 0 40px rgba(255, 206, 122, 0.45);
+}
+
+.banner i {
+  display: block;
+  margin-top: calc(var(--u) * 6px);
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: calc(var(--u) * 18px);
+  color: rgba(206, 224, 252, 0.72);
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.8);
+}
+
+/* the dawn meter: only appears when the light is actually on you */
+.dawnmeter {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--u) * 26px);
+  transform: translateX(-50%);
+  width: calc(var(--u) * 240px);
+  text-align: center;
+  animation: fade-in 200ms linear both;
+}
+
+.dawnmeter .label {
+  display: block;
+  margin-bottom: calc(var(--u) * 6px);
+  font-size: calc(var(--u) * 11px);
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: #ffd2b0;
+  text-shadow: 0 0 14px rgba(255, 140, 90, 0.8);
+  animation: dawn-pulse 0.6s ease-in-out infinite;
+}
+
+.dawnmeter .bar {
+  height: calc(var(--u) * 5px);
+  background: rgba(255, 190, 150, 0.16);
+}
+
+.dawnmeter .bar i {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #ffbe7a, #ff7e52);
+  box-shadow: 0 0 calc(var(--u) * 12px) rgba(255, 126, 82, 0.9);
+  transition: width 100ms linear;
+}
+
+/* ==================================================================== */
+/*  leaderboard                                                         */
+/* ==================================================================== */
 
 .dock-right {
   position: fixed;
   top: 20px;
   right: 20px;
-  z-index: 25;
+  z-index: 15;
+  width: 290px;
+  max-width: calc(50vw - 40px);
+  animation: slide-in 0.7s var(--ease) both 0.2s;
+}
+
+.board {
+  padding: 18px 18px 14px;
+  background:
+    linear-gradient(168deg, rgba(28, 41, 66, 0.9) 0%, rgba(10, 17, 31, 0.94) 100%);
+}
+
+.board h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.04rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--gold-soft);
+}
+
+.board .sub {
+  margin: 2px 0 12px;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted-dim);
+}
+
+.board ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 1px;
+}
+
+.board li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px 9px;
+  border-radius: 9px;
+  font-size: 0.87rem;
+  overflow: hidden;
+  animation: slide-in 0.45s var(--ease) both;
+}
+
+/* A hairline under each row, as long as that score is tall — the shape of
+   the night's competition, readable at a glance without shouting. */
+.board li::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  bottom: 2px;
+  height: 2px;
+  width: calc(var(--w, 0%) - 16px);
+  min-width: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, rgba(146, 176, 228, 0.5), rgba(146, 176, 228, 0.12));
+  transition: width 700ms var(--ease-out);
+}
+
+.board li > * {
+  position: relative;
+}
+
+.board li .r {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: rgba(143, 162, 196, 0.9);
+  text-align: center;
+}
+
+.board li .n {
+  color: #e6edfb;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+.board li .s {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #cfdcf3;
+}
+
+.board li:nth-child(1) .r {
+  color: var(--gold);
+}
+.board li:nth-child(2) .r {
+  color: #d6e2f5;
+}
+.board li:nth-child(3) .r {
+  color: #e3a877;
+}
+
+.board li:nth-child(1)::before {
+  background: linear-gradient(90deg, rgba(255, 217, 138, 0.75), rgba(255, 217, 138, 0.12));
+}
+
+.board li.me {
+  box-shadow: inset 0 0 0 1px rgba(255, 217, 138, 0.4);
+}
+
+.board li.me::before {
+  background: linear-gradient(90deg, var(--gold), rgba(255, 217, 138, 0.2));
+  box-shadow: 0 0 10px rgba(255, 206, 122, 0.6);
+}
+
+.board li.me .n,
+.board li.me .s {
+  color: var(--gold-soft);
+}
+
+.board li.resident .n {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: rgba(205, 220, 246, 0.78);
+}
+
+.board li.resident .n svg {
+  flex: none;
+  width: 11px;
+  height: 11px;
+  color: var(--mint);
+  opacity: 0.75;
+}
+
+.board li.resident .s {
+  color: rgba(143, 162, 196, 0.75);
+}
+
+.board .empty {
+  margin: 6px 0;
+  font-size: 0.8rem;
+  color: var(--muted-dim);
+}
+
+.board .countdown {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+  padding-top: 11px;
+  border-top: 1px solid rgba(176, 202, 255, 0.1);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted-dim);
+}
+
+.board .countdown b {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.08em;
+  color: var(--gold-soft);
 }
 
 .board-close {
   position: absolute;
   top: 10px;
   right: 12px;
-  width: 30px;
-  height: 30px;
-  border-radius: 9px;
-  color: var(--muted);
-  background: rgba(255, 255, 255, 0.05);
+  font-size: 0.9rem;
+  color: var(--muted-dim);
 }
 
 .mobile-only {
   display: none;
 }
 
+/* ==================================================================== */
+/*  small chrome                                                        */
+/* ==================================================================== */
+
 .dock-left {
   position: fixed;
   top: 20px;
   left: 20px;
-  z-index: 30;
+  z-index: 15;
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+  animation: slide-in 0.7s var(--ease) both 0.2s;
+}
+
+.legend {
+  display: grid;
+  gap: 7px;
+  font-size: 0.72rem;
+  color: var(--muted-dim);
+}
+
+.legend div {
+  display: flex;
   align-items: center;
+  gap: 8px;
+}
+
+.legend kbd svg {
+  display: block;
+  opacity: 0.85;
+}
+
+.legend kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 21px;
+  height: 21px;
+  padding: 0 5px;
+  border-radius: 6px;
+  font-family: var(--font-ui);
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: var(--muted);
+  background: rgba(14, 22, 38, 0.8);
+  border: 1px solid rgba(176, 202, 255, 0.14);
+  box-shadow: inset 0 1px 0 rgba(222, 236, 255, 0.08), 0 1px 0 rgba(0, 0, 0, 0.5);
 }
 
 .iconbtn {
-  width: 38px;
-  height: 38px;
   display: grid;
   place-items: center;
+  width: 40px;
+  height: 40px;
   border-radius: 12px;
-  background: var(--panel);
-  box-shadow: inset 0 0 0 1px var(--panel-line);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
   color: var(--muted);
-  transition: color 0.15s, background 0.15s, transform 0.15s var(--ease);
+  background: rgba(14, 22, 38, 0.86);
+  border: 1px solid var(--panel-line);
+  box-shadow: var(--panel-bevel);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  transition: color 180ms, border-color 180ms, transform 180ms var(--ease);
 }
 
 .iconbtn:hover {
-  color: var(--gold);
-  background: rgba(255, 217, 138, 0.1);
+  color: var(--gold-soft);
+  border-color: rgba(255, 217, 138, 0.35);
   transform: translateY(-1px);
 }
 
 .toast {
   position: fixed;
   left: 50%;
-  bottom: 28px;
+  bottom: 30px;
   transform: translateX(-50%);
-  padding: 10px 18px;
-  border-radius: 999px;
-  background: var(--panel);
-  box-shadow: inset 0 0 0 1px var(--panel-line), var(--panel-glow);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  font-size: 0.86rem;
-  color: var(--gold-soft);
   z-index: 40;
-  animation: rise 0.35s var(--ease) both;
+  padding: 11px 20px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  color: var(--ink);
+  background: rgba(12, 19, 34, 0.9);
+  border: 1px solid rgba(255, 217, 138, 0.28);
+  box-shadow: var(--panel-shadow);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  animation: toast-in 0.4s var(--ease) both;
 }
 
 #mute[data-muted="0"] .off,
 #mute[data-muted="1"] .on {
   display: none;
-}
-
-/* ------------------------------------------------------------------ */
-/* animation                                                           */
-/* ------------------------------------------------------------------ */
-
-@keyframes fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes rise {
-  from { opacity: 0; transform: translateY(16px) scale(0.985); }
-  to { opacity: 1; transform: none; }
-}
-
-@keyframes slide-in {
-  from { opacity: 0; transform: translateX(18px); }
-  to { opacity: 1; transform: none; }
-}
-
-@keyframes pop {
-  0% { opacity: 0; transform: scale(0.8); }
-  60% { transform: scale(1.06); }
-  100% { opacity: 1; transform: scale(1); }
-}
-
-@keyframes flutter {
-  0%, 100% { transform: translateY(0) rotate(-2deg); }
-  50% { transform: translateY(-6px) rotate(2deg); }
-}
-
-.moth-mark {
-  display: block;
-  margin: 0 auto 6px;
-  animation: flutter 3.4s ease-in-out infinite;
-  filter: drop-shadow(0 0 18px rgba(255, 214, 142, 0.45));
-}
-
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-  }
-}
-
-/* ------------------------------------------------------------------ */
-/* small screens                                                       */
-/* ------------------------------------------------------------------ */
-
-/**
- * Below ~1100px the leaderboard would collide with the centred cards, so it
- * becomes a sheet you pull up on purpose instead of furniture that's always
- * in the way.
- */
-@media (max-width: 1100px) {
-  .mobile-only {
-    display: inline-flex;
-  }
-
-  .dock-right {
-    display: none;
-  }
-
-  html.show-board .dock-right {
-    display: block;
-    position: fixed;
-    inset: auto 12px 12px 12px;
-    top: auto;
-    z-index: 40;
-    animation: rise 0.3s var(--ease) both;
-  }
-
-  html.show-board .board {
-    width: 100%;
-    max-height: min(56vh, 460px);
-    position: relative;
-  }
-
-  html.show-board .board-close {
-    display: grid;
-    place-items: center;
-  }
-}
-
-@media (max-width: 520px) {
-  .title-card {
-    padding: 26px 20px 20px;
-  }
-
-  .stats {
-    grid-template-columns: repeat(2, 1fr);
-  }
 }
 
 .sr-only {
@@ -760,51 +1384,231 @@ input {
   padding: 0;
   margin: -1px;
   overflow: hidden;
-  clip: rect(0 0 0 0);
-  clip-path: inset(50%);
+  clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
 }
 
-.board li.resident .n {
-  color: var(--muted);
-  font-weight: 460;
+/* ==================================================================== */
+/*  motion                                                              */
+/* ==================================================================== */
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
 }
 
-.board li.resident .n i {
-  font-style: normal;
-  color: var(--mint);
-  opacity: 0.55;
-  font-size: 0.8em;
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+    filter: blur(6px);
+  }
 }
 
-.board li.resident .s {
-  color: var(--muted);
-  font-weight: 540;
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(22px);
+  }
 }
 
-/* ------------------------------------------------------------------ */
-/* screen switching (no framework, just a class on <html>)             */
-/* ------------------------------------------------------------------ */
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: scale(0.84);
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 12px);
+  }
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.75;
+  }
+  50% {
+    transform: scale(1.14);
+    opacity: 1;
+  }
+}
+
+@keyframes flutter {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-5px) scale(1.04);
+  }
+}
+
+@keyframes sheen {
+  to {
+    transform: translateX(120%);
+  }
+}
+
+@keyframes wordmark-shimmer {
+  0%,
+  62% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 100% 0;
+  }
+}
+
+@keyframes score-bump {
+  40% {
+    transform: scale(1.09);
+  }
+}
+
+@keyframes glimmer-out {
+  30% {
+    transform: scale(1.5);
+    box-shadow: 0 0 26px rgba(255, 150, 110, 0.9);
+  }
+}
+
+@keyframes dawn-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@keyframes banner {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(10px);
+    letter-spacing: 0.18em;
+  }
+  18%,
+  76% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-8px);
+  }
+}
+
+@keyframes grain-drift {
+  0% {
+    transform: translate(0, 0);
+  }
+  25% {
+    transform: translate(-34px, 18px);
+  }
+  50% {
+    transform: translate(24px, -26px);
+  }
+  75% {
+    transform: translate(-18px, -12px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  .grain {
+    animation: none;
+  }
+}
+
+/* ==================================================================== */
+/*  responsive                                                          */
+/* ==================================================================== */
+
+@media (max-width: 1100px) {
+  .mobile-only {
+    display: inline-flex;
+  }
+
+  .legend {
+    display: none;
+  }
+
+  .dock-right {
+    position: fixed;
+    inset: auto 0 0 0;
+    width: 100%;
+    max-width: none;
+    padding: 0 10px 10px;
+    transform: translateY(104%);
+    transition: transform 420ms var(--ease);
+  }
+
+  .show-board .dock-right {
+    transform: translateY(0);
+  }
+
+  .board {
+    border-radius: var(--r-lg) var(--r-lg) 0 0;
+    max-height: 62vh;
+    overflow-y: auto;
+  }
+
+  .is-playing .dock-right {
+    display: none;
+  }
+}
+
+@media (max-width: 520px) {
+  .title-card,
+  .result {
+    padding: 24px 20px 20px;
+  }
+
+  .stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .stats .cell:nth-child(3) {
+    border-left: 0;
+  }
+
+  .stats .cell:nth-child(n + 3) {
+    border-top: 1px solid rgba(176, 202, 255, 0.08);
+  }
+}
+
+@media (max-height: 700px) {
+  .howto {
+    display: none;
+  }
+  .title-card .footnote {
+    display: none;
+  }
+}
 
 .curtain[hidden],
 [hidden] {
   display: none !important;
 }
 
-.stage {
-  cursor: default;
-}
-
-/** the leaderboard tucks away while you are actually flying */
 .is-playing .dock-right,
 .is-playing .dock-left {
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.4s var(--ease);
+  transition: opacity 400ms var(--ease);
 }
 
 .dock-right,
 .dock-left {
-  transition: opacity 0.4s var(--ease);
+  transition: opacity 400ms var(--ease);
 }

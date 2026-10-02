@@ -10,7 +10,7 @@ A new night garden grows every day — the same one for everybody on earth.
 Lead a moth through thorns, webs, rain and spiders by moving your light, and
 race the ghosts of everyone else who flew tonight.
 
-**~23 KB over the wire. No download, no sign-up, no loading screen.**
+**~28 KB over the wire. No download, no sign-up, no loading screen.**
 Runs on nothing but Vercel and a Neon database.
 
 </div>
@@ -40,17 +40,57 @@ Underneath that there are three ideas doing the heavy lifting:
 
 <div align="center">
 
+![The title screen](docs/ui-title.jpg)
+
+![In flight](docs/ui-play.jpg)
+
+![The result card](docs/ui-result.jpg)
+
+</div>
+
 | The Hedgerow | The Glasshouse |
 |---|---|
 | ![](docs/shot-hedgerow.png) | ![](docs/shot-glasshouse.png) |
 | **The Thunderhead** | **The Moonfield** |
 | ![](docs/shot-thunderhead.png) | ![](docs/shot-moonfield.png) |
 
-</div>
-
 Five biomes rotate as you climb, each with its own palette, hazard mix and
-one line of text. Those screenshots are rendered by the real engine running
-headlessly — see [`scripts/shot.ts`](scripts/shot.ts).
+one line of text.
+
+---
+
+## The interface
+
+There are no images in this interface. Not one — no icon font, no sprite
+sheet, no UI framework. Every panel, bead, dial and medal is layered
+gradients, hairline borders, backdrop blur and one procedural grain, which
+is why a game that looks like this still costs 28 KB.
+
+<div align="right"><img src="docs/ui-mobile.jpg" width="200" align="right" alt="MOTHLIGHT on a phone"></div>
+
+**The HUD belongs to the field, not the window.** The engine reports the
+exact rectangle of the letterboxed play-field on every resize, and the HUD
+is positioned on it and sized in world units — so the score sits in the same
+place relative to the garden on a phone as on an ultrawide. But it is *DOM
+text*, rendered at full device resolution, so it never looks like canvas
+type that has been scaled up. It is the only part of the game that is not
+drawn on the canvas, and that is deliberate.
+
+Things worth noticing:
+
+- **The light is the chrome.** Gold appears only on what you should look at
+  or touch: the play button, your own row on the board, a lit glimmer.
+- **Glass, not walls.** Every panel is translucent and blurs the garden
+  behind it. The attract-mode moth keeps flying behind the title card and
+  its glow blooms through the glass.
+- **The combo is a dial that drains**, so you can feel a chain running out
+  without reading a number.
+- **Ghost pips go dark one at a time** as other players' runs end — the
+  battle-royale tension of "7 moths still flying" with no server involved.
+- **The dawn meter only exists when the dawn is actually on you**, and the
+  whole window warms and tightens with it.
+- **The score tallies up** on the result card rather than appearing, and
+  your medal shows the same rank the leaderboard beside it is showing.
 
 ---
 
@@ -74,7 +114,7 @@ Most of the work here went into *not shipping things*.
 
 | | |
 |---|---|
-| **Total first load** | **~23 KB gzipped** (17.5 KB JS + 5.9 KB HTML with CSS inlined) |
+| **Total first load** | **~28 KB gzipped** (18.7 KB JS + 9.8 KB HTML with CSS inlined) |
 | **Framework runtime** | none — zero React, zero hydration, zero client router |
 | **Images** | none. Every pixel is drawn procedurally into cached offscreen canvases at boot |
 | **Audio files** | none. Every pad, pluck and gust is synthesised with Web Audio in a D-major pentatonic, so it can't play a wrong note |
@@ -143,11 +183,11 @@ npm run dev          # builds the client bundle, then starts Next on :3000
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm test` | engine harness + jsdom UI smoke test + database checks |
 | `npm run test:db` | run every SQL query against Postgres-in-WASM |
+| `npm run shots` | screenshot the interface in real Chromium |
 
-### Testing a canvas game without a browser
+### Testing a canvas game
 
-There are two harnesses, and between them they cover most of what you'd
-otherwise need a browser for:
+Four harnesses, none of which need a human to look at anything:
 
 - **[`scripts/harness.ts`](scripts/harness.ts)** stubs the DOM, boots the real
   engine in Node and flies it with an autopilot — proving a full run never
@@ -160,9 +200,21 @@ otherwise need a browser for:
   [`lib/db.ts`](lib/db.ts) — schema, ranking, `DISTINCT ON`, pruning — against
   Postgres compiled to WASM, in-process. No Neon account, no network, and it
   proves a recorded replay survives the round trip through the database.
-- **[`scripts/shot.ts`](scripts/shot.ts)** renders real frames to PNG with
-  `@napi-rs/canvas`, which is how the screenshots above were made — and how
-  the art direction got reviewed at all.
+- **[`scripts/shot.ts`](scripts/shot.ts)** renders real engine frames to PNG
+  with `@napi-rs/canvas` — how the biome screenshots were made, and how the
+  art direction gets reviewed.
+- **[`scripts/uishot.mjs`](scripts/uishot.mjs)** drives the *interface* in
+  real headless Chromium against a running server, and can act out a whole
+  flight before it takes the shot:
+
+  ```bash
+  npm i --no-save puppeteer-core @sparticuz/chromium   # ~70 MB, not a dependency
+  npm start &
+  node scripts/uishot.mjs / docs/ui-title.jpg 1280 800
+  ```
+
+  Those two packages are deliberately kept out of `package.json` so nobody
+  pays 70 MB to build a 28 KB game.
 
 ---
 

@@ -10,12 +10,19 @@
  */
 
 import { GameAudio } from "../game/audio";
-import { Game, type RunResult } from "../game/engine";
+import { Game, type HudSnapshot, type RunResult, type ViewRect } from "../game/engine";
 import { decodePath, type GhostRun } from "../game/ghost";
 import { residentGhosts } from "../game/residents";
 import { dailySeed, msUntilNextSeed } from "../game/rng";
 
 const MIN_COMPANY = 4;
+
+/** Drawn, not typed — a subsetted font has no ❧ and renders a tofu box. */
+const LEAF =
+  '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M10.5 1.5C5 1.5 2 4 2 7.3c0 1 .3 1.8.8 2.4L1.4 11l.8.8 1.4-1.4c.7.4 1.5.6 2.4.6C9.3 11 11 7.8 10.5 1.5Z" fill="currentColor"/></svg>';
+
+/** The circumference of the combo ring (r = 15.5), for stroke-dashoffset. */
+const RING = 2 * Math.PI * 15.5;
 
 const LS = {
   player: "mothlight:player",
@@ -110,6 +117,25 @@ export function boot(): void {
   const muteBtn = el<HTMLButtonElement>("mute");
   const toastEl = el("toast");
 
+  const hud = {
+    root: el("hud"),
+    score: el("hud-score"),
+    metres: el("hud-metres"),
+    combo: el("hud-combo"),
+    comboN: el("hud-combo-n"),
+    comboRing: el("hud-combo-ring"),
+    ghosts: el("hud-ghosts"),
+    ghostText: el("hud-ghost-text"),
+    pips: el("hud-pips"),
+    glimmers: el("hud-glimmers"),
+    banner: el("banner"),
+    bannerTitle: el("banner-title"),
+    bannerSub: el("banner-sub"),
+    dawn: el("dawn"),
+    dawnFill: el("dawn-fill"),
+  };
+  const vignette = document.querySelector<HTMLElement>(".vignette");
+
   nameInput.value = name;
 
   /* ---------------------------------------------------------------- */
@@ -124,6 +150,9 @@ export function boot(): void {
     fontFamily: getComputedStyle(document.body).fontFamily || "sans-serif",
     reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
     onEnd: finishRun,
+    onHud: paintHud,
+    onViewport: placeHud,
+    onBanner: showBanner,
   });
   game.mount();
   audio.setMuted(muted);
@@ -132,6 +161,123 @@ export function boot(): void {
   paintMute();
 
   new ResizeObserver(() => game.resize()).observe(stage);
+
+  /* ---------------------------------------------------------------- */
+  /* HUD                                                               */
+  /*                                                                   */
+  /* The engine owns the simulation and hands us a snapshot ten times  */
+  /* a second; everything that needs to look smoother than that (the   */
+  /* score roll, the combo dial, the dawn meter) is interpolated by    */
+  /* CSS transitions rather than by re-rendering faster.               */
+  /* ---------------------------------------------------------------- */
+
+  /** Sit the HUD exactly on the letterboxed play field. */
+  function placeHud(r: ViewRect): void {
+    const st = document.documentElement.style;
+    st.setProperty("--fx", `${r.x}px`);
+    st.setProperty("--fy", `${r.y}px`);
+    st.setProperty("--fw", `${r.w}px`);
+    st.setProperty("--fh", `${r.h}px`);
+    st.setProperty("--u", String(r.u));
+  }
+
+  let shownScore = 0;
+  let shownGlimmers = -1;
+  let shownGhosts = -1;
+
+  function paintHud(h: HudSnapshot): void {
+    if (h.score !== shownScore) {
+      // Count up rather than snap: a jump of 300 should feel earned.
+      shownScore = h.score;
+      hud.score.textContent = h.score.toLocaleString();
+      hud.score.classList.remove("bump");
+      void hud.score.offsetWidth; // restart the animation
+      hud.score.classList.add("bump");
+    }
+    hud.metres.textContent = h.metres.toLocaleString();
+
+    if (h.combo > 1) {
+      if (hud.combo.hidden) {
+        hud.combo.hidden = false;
+      }
+      hud.comboN.textContent = String(h.combo);
+      hud.comboRing.setAttribute(
+        "stroke-dashoffset",
+        String((1 - h.comboLeft) * RING),
+      );
+    } else {
+      hud.combo.hidden = true;
+    }
+
+    if (h.glimmers !== shownGlimmers) {
+      paintGlimmers(h.glimmers, shownGlimmers);
+      shownGlimmers = h.glimmers;
+    }
+
+    if (h.ghostsTotal > 0) {
+      hud.ghosts.hidden = false;
+      if (h.ghostsTotal !== hud.pips.childElementCount) {
+        hud.pips.innerHTML = "<b></b>".repeat(h.ghostsTotal);
+      }
+      if (h.ghostsAlive !== shownGhosts) {
+        shownGhosts = h.ghostsAlive;
+        const pips = hud.pips.children;
+        for (let i = 0; i < pips.length; i++) {
+          pips[i].classList.toggle("asleep", i >= h.ghostsAlive);
+        }
+        hud.ghostText.textContent =
+          h.ghostsAlive > 0
+            ? `${h.ghostsAlive} ${h.ghostsAlive === 1 ? "moth" : "moths"} still flying`
+            : "you are the last light";
+      }
+    } else {
+      hud.ghosts.hidden = true;
+    }
+
+    hud.dawn.hidden = h.danger <= 0.02;
+    hud.dawnFill.style.width = `${Math.round(h.danger * 100)}%`;
+    vignette?.style.setProperty("--danger", h.danger.toFixed(2));
+  }
+
+  /** Lives, as lantern beads. A spent one flares before it goes dark. */
+  function paintGlimmers(now: number, before: number): void {
+    const max = Math.max(now, hud.glimmers.childElementCount, 3);
+    if (hud.glimmers.childElementCount !== max) {
+      hud.glimmers.innerHTML = "<b></b>".repeat(max);
+    }
+    const beads = hud.glimmers.children;
+    for (let i = 0; i < beads.length; i++) {
+      const bead = beads[i];
+      const lit = i < now;
+      bead.classList.toggle("on", lit);
+      if (!lit && before >= 0 && i < before) {
+        bead.classList.remove("spent");
+        void (bead as HTMLElement).offsetWidth;
+        bead.classList.add("spent");
+      }
+    }
+  }
+
+  function showBanner(text: string, sub: string): void {
+    hud.bannerTitle.textContent = text;
+    hud.bannerSub.textContent = sub;
+    hud.banner.hidden = true;
+    void hud.banner.offsetWidth;
+    hud.banner.hidden = false;
+    window.setTimeout(() => (hud.banner.hidden = true), 3400);
+  }
+
+  function resetHud(): void {
+    shownScore = -1;
+    shownGlimmers = -1;
+    shownGhosts = -1;
+    hud.score.textContent = "0";
+    hud.metres.textContent = "0";
+    hud.combo.hidden = true;
+    hud.banner.hidden = true;
+    hud.dawn.hidden = true;
+    vignette?.style.setProperty("--danger", "0");
+  }
 
   /* ---------------------------------------------------------------- */
   /* screens                                                           */
@@ -145,6 +291,11 @@ export function boot(): void {
     document.documentElement.classList.toggle("is-playing", next === "playing");
     if (next === "playing") document.documentElement.classList.remove("show-board");
     stage.classList.toggle("playing", next === "playing");
+    hud.root.hidden = next !== "playing";
+    // hand the keyboard the obvious next move
+    const focus =
+      next === "title" ? el("play") : next === "result" ? el("again") : null;
+    if (focus) window.setTimeout(() => focus.focus({ preventScroll: true }), 50);
   }
 
   function toast(msg: string): void {
@@ -170,6 +321,8 @@ export function boot(): void {
     muteBtn.dataset.muted = muted ? "1" : "0";
     muteBtn.setAttribute("aria-label", muted ? "Unmute" : "Mute");
     muteBtn.title = muted ? "Unmute (M)" : "Mute (M)";
+    // the docks are hidden mid-flight, so the pause card carries its own
+    el("pause-mute").textContent = muted ? "Sound off" : "Sound on";
   }
 
   /* ---------------------------------------------------------------- */
@@ -210,17 +363,19 @@ export function boot(): void {
         "Nobody has flown tonight's garden yet. The first name here is yours.";
     }
 
+    const top = Math.max(1, list[0]?.score ?? 1);
     boardList.innerHTML = list
-      .map((r) => {
+      .map((r, i) => {
         const resident = r.player.startsWith("resident:");
         const cls = [r.player === player ? "me" : "", resident ? "resident" : ""]
           .filter(Boolean)
           .join(" ");
         return (
           `<li${cls ? ` class="${cls}"` : ""}` +
+          ` style="--w:${Math.round((r.score / top) * 100)}%;animation-delay:${i * 32}ms"` +
           `${resident ? ' title="A resident of tonight\'s garden"' : ""}>` +
           `<span class="r">${r.rank}</span>` +
-          `<span class="n">${escapeHtml(r.name)}${resident ? " <i>❧</i>" : ""}</span>` +
+          `<span class="n">${escapeHtml(r.name)}${resident ? ` ${LEAF}` : ""}</span>` +
           `<span class="s">${r.score.toLocaleString()}</span></li>`
         );
       })
@@ -299,6 +454,7 @@ export function boot(): void {
     name = nameInput.value.trim();
     localStorage.setItem(LS.name, name);
     game.setGhosts(ghosts);
+    resetHud();
     game.launch();
     paused = false;
     show("playing");
@@ -326,25 +482,65 @@ export function boot(): void {
     }
 
     el("verdict").textContent = verdictFor(r);
-    el("score-value").textContent = r.score.toLocaleString();
+    countUp(el("score-value"), r.score);
     el("pb").hidden = !isPb;
-    el("stat-metres").textContent = String(r.metres);
-    el("stat-pollen").textContent = String(r.pollen);
+    countUp(el("stat-metres"), r.metres, 520);
+    countUp(el("stat-pollen"), r.pollen, 520);
     el("stat-chain").textContent = `×${r.bestCombo}`;
     el("stat-rank").textContent = `${r.duration.toFixed(0)}s`;
     el("stat-rank-label").textContent = "aloft";
 
+    paintMedal(localPlace(r.score));
+
     const outflew = el("outflew");
     if (r.ghostsTotal > 0) {
       outflew.hidden = false;
-      outflew.innerHTML =
+      el("outflew-text").innerHTML =
         `You outflew <b>${r.ghostsBeaten}</b> of ${r.ghostsTotal} moths ` +
         `in the sky with you.`;
+      const pct = Math.round((r.ghostsBeaten / r.ghostsTotal) * 100);
+      const fill = el("outflew-fill");
+      fill.style.width = "0%";
+      window.setTimeout(() => (fill.style.width = `${pct}%`), 60);
     } else {
       outflew.hidden = true;
     }
 
     void submit(r);
+  }
+
+  /**
+   * The medal shows your place on tonight's board — the same ranking the
+   * leaderboard beside it is showing, so the two can never disagree. It
+   * starts from what we can work out locally and is corrected the moment
+   * the server answers with the real standing.
+   */
+  function paintMedal(place: number): void {
+    const medal = el("medal");
+    el("medal-rank").textContent = String(place);
+    medal.dataset.tier =
+      place === 1 ? "gold" : place === 2 ? "silver" : place === 3 ? "bronze" : "none";
+  }
+
+  /** Where a score would land on the board as we currently know it. */
+  function localPlace(score: number): number {
+    return mergedRows().filter((row) => row.score > score).length + 1;
+  }
+
+  /** Tween a number into place. Finishing a run should feel like a tally. */
+  function countUp(node: HTMLElement, to: number, ms = 760): void {
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches || to <= 0) {
+      node.textContent = to.toLocaleString();
+      return;
+    }
+    const start = performance.now();
+    const step = (now: number) => {
+      const k = Math.min(1, (now - start) / ms);
+      const eased = 1 - Math.pow(1 - k, 3);
+      node.textContent = Math.round(to * eased).toLocaleString();
+      if (k < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
   }
 
   async function submit(r: RunResult): Promise<void> {
@@ -374,6 +570,7 @@ export function boot(): void {
       if (data.ok && !data.offline && data.rank) {
         el("stat-rank").textContent = `#${data.rank}`;
         el("stat-rank-label").textContent = `of ${data.total}`;
+        paintMedal(data.rank);
       }
     } catch {
       /* the flight still counts on this device */
@@ -418,6 +615,7 @@ export function boot(): void {
     paused = true;
     game.setPaused(true);
     screens.pause.hidden = false;
+    window.setTimeout(() => el("resume").focus({ preventScroll: true }), 50);
   }
 
   function resume(): void {
@@ -454,6 +652,8 @@ export function boot(): void {
     paintMute();
   });
 
+  el("pause-mute").addEventListener("click", () => muteBtn.click());
+
   nameInput.addEventListener("change", () => {
     name = nameInput.value.trim();
     localStorage.setItem(LS.name, name);
@@ -466,8 +666,14 @@ export function boot(): void {
       return;
     }
     if (screen === "playing") {
-      if (e.key === "Escape") quit();
-      else if (paused && (e.key === "Enter" || e.key === " ")) {
+      // Escape pauses — it used to abandon the run outright, which is a
+      // brutal thing to do to someone three minutes into a good flight.
+      // Giving up is now a deliberate choice on the pause card.
+      if (e.key === "Escape") {
+        if (paused) resume();
+        else pause();
+        e.preventDefault();
+      } else if (paused && (e.key === "Enter" || e.key === " ")) {
         e.preventDefault();
         resume();
       }

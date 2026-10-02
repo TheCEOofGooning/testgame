@@ -43,10 +43,24 @@ export interface HudSnapshot {
   metres: number;
   glimmers: number;
   combo: number;
+  /** seconds left on the current chain, 0..1 of its window */
+  comboLeft: number;
   ghostsAlive: number;
   ghostsTotal: number;
   time: number;
   biome: string;
+  /** 0 = safely in the dark, 1 = the dawn is about to take you */
+  danger: number;
+}
+
+/** The field's on-screen rectangle, in CSS pixels. */
+export interface ViewRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** CSS pixels per world unit */
+  u: number;
 }
 
 export interface RunResult {
@@ -71,6 +85,10 @@ export interface GameOptions {
   reducedMotion?: boolean;
   onEnd: (r: RunResult) => void;
   onHud?: (h: HudSnapshot) => void;
+  /** Fired on every resize so a DOM overlay can sit exactly on the field. */
+  onViewport?: (r: ViewRect) => void;
+  /** Fired once when a new biome is entered, for the DOM banner. */
+  onBanner?: (text: string, sub: string) => void;
 }
 
 interface Particle {
@@ -364,6 +382,16 @@ export class Game {
     this.fieldH = clamp(this.viewH / this.scale, MIN_VIEW_H, MAX_VIEW_H);
     this.offX = (this.viewW - FIELD_W * this.scale) / 2;
     this.offY = (this.viewH - this.fieldH * this.scale) / 2;
+    if (this.opts.onViewport) {
+      const u = this.scaleCss();
+      this.opts.onViewport({
+        x: this.offX / this.dpr,
+        y: this.offY / this.dpr,
+        w: FIELD_W * u,
+        h: this.fieldH * u,
+        u,
+      });
+    }
   }
 
   /* ------------------------------------------------------------------ */
@@ -393,11 +421,6 @@ export class Game {
     }
     this.render();
 
-    this.hudAcc += dt;
-    if (this.hudAcc > 0.1 && this.opts.onHud) {
-      this.hudAcc = 0;
-      this.opts.onHud(this.hud());
-    }
   };
 
   private hud(): HudSnapshot {
@@ -406,10 +429,12 @@ export class Game {
       metres: Math.floor(this.metres),
       glimmers: this.glimmers,
       combo: this.combo,
+      comboLeft: clamp(this.comboT / RULES.comboWindow, 0, 1),
       ghostsAlive: this.ghostsAlive(),
       ghostsTotal: this.ghosts.length,
       time: this.t,
       biome: this.biomeNow().name,
+      danger: clamp(this.dawnT / RULES.dawnGrace, 0, 1),
     };
   }
 
@@ -424,6 +449,11 @@ export class Game {
   /* ------------------------------------------------------------------ */
 
   private step(dt: number): void {
+    this.hudAcc += dt;
+    if (this.hudAcc > 0.1 && this.opts.onHud) {
+      this.hudAcc = 0;
+      this.opts.onHud(this.hud());
+    }
     if (this.phase === "attract") return this.stepAttract(dt);
     if (this.phase === "done") return;
 
@@ -560,6 +590,7 @@ export class Game {
     if (b.name !== this.lastBiome) {
       this.lastBiome = b.name;
       this.banner = { text: b.name, sub: b.blurb, t: 3.4 };
+      this.opts.onBanner?.(b.name, b.blurb);
     }
     if (this.banner.t > 0) this.banner.t -= dt;
   }
@@ -869,7 +900,6 @@ export class Game {
 
     g.restore();
 
-    if (this.phase === "flying" || this.phase === "settling") this.drawHud();
 
     // frame the terrarium: a thin rim plus a soft spill of light onto the
     // surrounding dark, so a wide monitor reads as "a window into a garden"
@@ -908,8 +938,24 @@ export class Game {
       }
     }
     g.globalAlpha = 1;
-    g.fillStyle = "rgba(2,4,10,0.74)";
+    g.fillStyle = "rgba(2,4,10,0.62)";
     g.fillRect(0, 0, this.viewW, this.viewH);
+
+    // Ambilight. On a wide monitor the garden only occupies a column, and
+    // the rest used to be flat black. Spilling the lantern's warmth into
+    // the surround makes the margins feel lit by the game rather than
+    // switched off — and it costs one gradient per frame.
+    const cx = this.offX + (FIELD_W * this.scale) / 2;
+    const cy = this.offY + (this.fieldH - (this.my - this.camY)) * this.scale;
+    const r = Math.max(this.viewW, this.fieldH * this.scale) * 0.92;
+    const spill = g.createRadialGradient(cx, cy, 0, cx, cy, r);
+    spill.addColorStop(0, "rgba(255,206,130,0.16)");
+    spill.addColorStop(0.35, "rgba(188,168,255,0.06)");
+    spill.addColorStop(1, "rgba(0,0,0,0)");
+    g.globalCompositeOperation = "lighter";
+    g.fillStyle = spill;
+    g.fillRect(0, 0, this.viewW, this.viewH);
+    g.globalCompositeOperation = "source-over";
   }
 
   private drawStars(): void {
@@ -1406,67 +1452,6 @@ export class Game {
     g.fillStyle = `rgba(255,205,150,${0.1 + danger * 0.22})`;
     g.fillRect(0, this.fieldH - 5, FIELD_W, 5);
     g.globalCompositeOperation = "source-over";
-  }
-
-  private drawHud(): void {
-    const g = this.ctx;
-    const f = this.opts.fontFamily;
-    g.textAlign = "left";
-    g.textBaseline = "alphabetic";
-
-    // score
-    g.fillStyle = "rgba(255,247,228,0.96)";
-    g.font = `700 46px ${f}`;
-    g.fillText(String(Math.floor(this.score)), 26, 62);
-    g.fillStyle = "rgba(214,230,255,0.55)";
-    g.font = `500 17px ${f}`;
-    g.fillText(`${Math.floor(this.metres)} m`, 28, 86);
-
-    // glimmers
-    for (let i = 0; i < RULES.glimmersMax; i++) {
-      const x = FIELD_W - 34 - i * 32;
-      const on = i < this.glimmers;
-      if (on) {
-        g.globalCompositeOperation = "lighter";
-        g.globalAlpha = 0.85;
-        g.drawImage(this.sprites.glow(40, "#ffd98a", 1.2), x - 22, 32 - 22, 44, 44);
-        g.globalAlpha = 1;
-        g.globalCompositeOperation = "source-over";
-      }
-      g.fillStyle = on ? "#fff0c4" : "rgba(255,240,196,0.16)";
-      g.beginPath();
-      g.arc(x, 32, 7, 0, Math.PI * 2);
-      g.fill();
-    }
-
-    // ghosts still flying
-    if (this.ghosts.length) {
-      const alive = this.ghostsAlive();
-      g.textAlign = "center";
-      g.fillStyle = "rgba(200,218,246,0.5)";
-      g.font = `500 15px ${f}`;
-      g.fillText(
-        alive > 0
-          ? `${alive} ${alive === 1 ? "moth" : "moths"} still flying`
-          : "you are the last light",
-        FIELD_W / 2, 34,
-      );
-    }
-
-    // biome banner
-    if (this.banner.t > 0) {
-      const a = Math.min(1, this.banner.t > 2.9 ? (3.4 - this.banner.t) / 0.5 : this.banner.t / 0.8);
-      g.textAlign = "center";
-      g.globalAlpha = a;
-      g.fillStyle = "rgba(255,248,232,0.92)";
-      g.font = `600 34px ${f}`;
-      g.fillText(this.banner.text, FIELD_W / 2, this.fieldH * 0.34);
-      g.fillStyle = "rgba(206,224,252,0.6)";
-      g.font = `italic 400 18px ${f}`;
-      g.fillText(this.banner.sub, FIELD_W / 2, this.fieldH * 0.34 + 30);
-      g.globalAlpha = 1;
-    }
-    g.textAlign = "left";
   }
 
   /* --------------------------- coordinate maps -------------------------- */
