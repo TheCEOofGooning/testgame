@@ -141,7 +141,8 @@ npm run dev          # builds the client bundle, then starts Next on :3000
 | `npm run build` | same, then `next build` |
 | `npm run watch` | rebuild the game bundle on change |
 | `npm run typecheck` | `tsc --noEmit` |
-| `npm test` | headless engine harness + jsdom UI smoke test |
+| `npm test` | engine harness + jsdom UI smoke test + database checks |
+| `npm run test:db` | run every SQL query against Postgres-in-WASM |
 
 ### Testing a canvas game without a browser
 
@@ -155,6 +156,10 @@ otherwise need a browser for:
 - **[`scripts/dom-smoke.ts`](scripts/dom-smoke.ts)** loads the *actual generated
   HTML* into jsdom and drives it like a player: click play, fly, die, read the
   result card, go back. It catches missing element ids and broken transitions.
+- **[`scripts/db-check.ts`](scripts/db-check.ts)** runs every query in
+  [`lib/db.ts`](lib/db.ts) — schema, ranking, `DISTINCT ON`, pruning — against
+  Postgres compiled to WASM, in-process. No Neon account, no network, and it
+  proves a recorded replay survives the round trip through the database.
 - **[`scripts/shot.ts`](scripts/shot.ts)** renders real frames to PNG with
   `@napi-rs/canvas`, which is how the screenshots above were made — and how
   the art direction got reviewed at all.

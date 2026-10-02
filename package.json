@@ -1,7 +1,7 @@
 {
   "name": "mothlight",
   "version": "1.0.0",
-  "description": "MOTHLIGHT — a cozy one-input night-garden flight game. Guide the light; the moth follows.",
+  "description": "MOTHLIGHT \u2014 a cozy one-input night-garden flight game. Guide the light; the moth follows.",
   "scripts": {
     "predev": "node scripts/build-client.mjs",
     "dev": "next dev",
@@ -10,7 +10,8 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "tsx scripts/harness.ts"
+    "test": "tsx scripts/harness.ts && tsx scripts/dom-smoke.ts && tsx scripts/db-check.ts",
+    "test:db": "tsx scripts/db-check.ts"
   },
   "repository": {
     "type": "git",
@@ -27,6 +28,7 @@
     "react-dom": "^19.3.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@napi-rs/canvas": "^1.0.10",
     "@types/jsdom": "^30.0.0",
     "@types/node": "^26.6.4",

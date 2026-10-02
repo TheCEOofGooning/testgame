@@ -16,6 +16,17 @@ export const hasDb = Boolean(process.env.DATABASE_URL);
 type Sql = ReturnType<typeof neon>;
 
 let _sql: Sql | null = null;
+
+/**
+ * Testing seam. `scripts/db-check.ts` points this at an in-process Postgres
+ * (pglite) so every query in this file can be verified for real, without
+ * anyone needing a Neon account to run the test suite.
+ */
+export function __setSqlForTesting(fn: Sql | null): void {
+  _sql = fn;
+  schemaReady = null;
+}
+
 export function sql(): Sql {
   if (!_sql) {
     const url = process.env.DATABASE_URL;
