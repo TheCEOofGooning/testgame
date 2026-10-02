@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Moonbloom — catch the light, grow the world's garden</title>
+  <meta name="description" content="A lovely 90-second arcade ritual. Catch falling seeds of light, survive until dawn, and plant your best flower in a garden shared by every player on Earth. New sky every day." />
+  <meta name="theme-color" content="#140e2e" />
+
+  <!-- Social cards -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Moonbloom 🌙" />
+  <meta property="og:description" content="Catch the light. Grow the world's garden. A tiny, lovely daily arcade game — same sky for everyone, new every midnight." />
+  <meta property="og:image" content="/og.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Moonbloom 🌙" />
+  <meta name="twitter:description" content="Catch the light. Grow the world's garden." />
+  <meta name="twitter:image" content="/og.png" />
+
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..700;1,9..144,300..700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <canvas id="sky"></canvas>
+
+  <!-- ======================= MENU ======================= -->
+  <section id="menu" class="panel-layer">
+    <div class="menu-card">
+      <h1 class="title">Moon<span>bloom</span></h1>
+      <p class="tagline">Catch the light. Grow the world's garden.</p>
+      <p class="daybadge" id="daybadge">Night #1 · same sky for everyone</p>
+
+      <div class="menu-buttons">
+        <button id="btn-play" class="btn primary">🌙&ensp;Tonight's Run</button>
+        <button id="btn-zen" class="btn">🫧&ensp;Zen Garden</button>
+        <button id="btn-garden" class="btn">🌍&ensp;World Garden</button>
+      </div>
+
+      <div class="board" id="menu-board">
+        <h3>Tonight's brightest</h3>
+        <ol id="menu-board-list"><li class="dim">listening to the dark…</li></ol>
+      </div>
+
+      <p class="howto">drag / arrow keys to drift · catch <b class="c-seed">seeds of light</b> · dodge <b class="c-thorn">thorns</b> · survive until dawn</p>
+    </div>
+    <button id="btn-mute" class="iconbtn" title="sound on/off">🔊</button>
+  </section>
+
+  <!-- ======================= HUD ======================= -->
+  <section id="hud" class="hidden">
+    <div class="hud-left">
+      <div id="hud-score">0</div>
+      <div id="hud-combo" class="hidden">×1</div>
+    </div>
+    <div class="hud-center">
+      <div id="dawnbar"><div id="dawnfill"></div></div>
+      <div id="dawnlabel">until dawn</div>
+    </div>
+    <div class="hud-right">
+      <div id="hud-petals">❀ ❀ ❀</div>
+      <button id="btn-quit" class="iconbtn small" title="leave">✕</button>
+    </div>
+  </section>
+
+  <!-- ======================= GAME OVER ======================= -->
+  <section id="over" class="panel-layer hidden">
+    <div class="menu-card">
+      <h2 id="over-title">Dawn arrives 🌅</h2>
+      <div class="stats">
+        <div class="stat"><em id="st-score">0</em><span>light</span></div>
+        <div class="stat"><em id="st-combo">×0</em><span>best&nbsp;chain</span></div>
+        <div class="stat"><em id="st-flowers">0</em><span>flowers</span></div>
+      </div>
+      <p id="over-best" class="dim small"></p>
+
+      <div id="plantbox">
+        <div class="plant-row">
+          <canvas id="bestflower" width="120" height="150"></canvas>
+          <div class="plant-fields">
+            <label for="inp-name">Sign your flower</label>
+            <input id="inp-name" maxlength="20" placeholder="your name" autocomplete="nickname" />
+            <input id="inp-msg" maxlength="60" placeholder="a tiny message for the world (optional)" />
+          </div>
+        </div>
+        <button id="btn-plant" class="btn primary">🌸&ensp;Plant it in the World Garden</button>
+        <p id="plant-status" class="dim small"></p>
+      </div>
+
+      <div class="board">
+        <h3>Tonight's brightest</h3>
+        <ol id="over-board-list"><li class="dim">…</li></ol>
+      </div>
+
+      <div class="menu-buttons row">
+        <button id="btn-share" class="btn">📋&ensp;Share</button>
+        <button id="btn-again" class="btn">↺&ensp;Again</button>
+        <button id="btn-tomenu" class="btn">🌙&ensp;Menu</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================= WORLD GARDEN ======================= -->
+  <section id="gardenbar" class="hidden">
+    <button id="btn-gback" class="iconbtn" title="back">←</button>
+    <div class="gtitle">
+      <h2>The World Garden</h2>
+      <p id="gcount" class="dim small">every flower here was grown by a real person</p>
+    </div>
+    <div class="ghint dim small">drag to wander</div>
+  </section>
+  <div id="gtip" class="hidden"></div>
+
+  <div id="toast" class="hidden"></div>
+
+  <script type="module" src="/game.js"></script>
+</body>
+</html>

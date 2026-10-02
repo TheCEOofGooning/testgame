@@ -1,0 +1,13 @@
+{
+  "name": "moonbloom",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Moonbloom — catch the light, grow the world's garden. A lovely daily arcade game for the browser.",
+  "scripts": {
+    "dev": "node dev-server.js"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^0.10.4"
+  }
+}
