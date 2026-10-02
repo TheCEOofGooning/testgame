@@ -2,7 +2,7 @@
 
 **Catch the light. Grow the world's garden.**
 
-![Moonbloom](og.png)
+![Moonbloom](og.jpg)
 
 Moonbloom is a tiny, lovely, lightning-fast browser arcade game. You guide a paper
 lantern through the dusk, catching falling seeds of light while dodging thorns,
@@ -58,7 +58,7 @@ DATABASE_URL=postgres://... npm run dev   # against real Neon
   every player, forever.
 - **Hooks:** daily seed + leaderboard (comeback loop) · emoji share card (viral loop)
   · persistent communal garden (emotional loop: *"my flower lives there"*).
-- `og.png` social card, Open Graph + Twitter meta tags, and a one-tap share button
+- `og.jpg` social card, Open Graph + Twitter meta tags, and a one-tap share button
   are already wired in.
 - **Sample post:** 🌙 Moonbloom — Night #7 · ✨ 2,340 light · ×18 chain ·
   🌸🌸🌸🌸 41 flowers grown
